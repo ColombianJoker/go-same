@@ -11,13 +11,20 @@ import (
 
 // ProcessOneFile now only updates the progress bar
 func ProcessOneFile(fileCount *int, verbose bool, blockSize int, rowSize int, digits int) {
-	*fileCount++
 	if verbose {
-		// Print a progress block
+		// Print a progress symbol for each file
 		fmt.Printf("=")
 
-		// Check if a new row is needed
+		*fileCount++
+
+		// Check if a block is complete
 		if *fileCount%blockSize == 0 {
+			// Print a space after each block, unless it's a new row
+			if (*fileCount/blockSize)%rowSize != 0 {
+				fmt.Printf(" ")
+			}
+
+			// Check if a row is complete
 			if (*fileCount/blockSize)%rowSize == 0 {
 				fmt.Printf(" [%s]\n", strconv.FormatInt(int64(*fileCount), 10))
 			}
