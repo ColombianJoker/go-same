@@ -1,164 +1,104 @@
 package main
 
 import (
-	"crypto/md5"
-	"crypto/sha1"
-	"crypto/sha256"
-	"crypto/sha512"
 	"flag"
 	"fmt"
-	"hash"
-	"io"
 	"log"
 	"os"
 	"path/filepath"
-	"strings"
-
-	"golang.org/x/crypto/blake2b"
-	"golang.org/x/crypto/md4"
-	"golang.org/x/crypto/ripemd160"
-	"golang.org/x/crypto/sha3"
-	"golang.org/x/sys/unix"
+	"strconv"
 )
 
-var filesByHash = make(map[string][]string)
+// ProcessOneFile now only updates the progress bar
+func ProcessOneFile(fileCount *int, verbose bool, blockSize int, rowSize int, digits int) {
+	*fileCount++
+	if verbose {
+		// Print a progress block
+		fmt.Printf("=")
 
-const xattrName = "user.file_hash"
-
-func getHash(algo string) (hash.Hash, error) {
-	switch strings.ToLower(algo) {
-	case "md4":
-		return md4.New(), nil
-	case "md5":
-		return md5.New(), nil
-	case "sha1":
-		return sha1.New(), nil
-	case "sha224":
-		return sha256.New224(), nil
-	case "sha256":
-		return sha256.New(), nil
-	case "sha384":
-		return sha512.New384(), nil
-	case "sha512":
-		return sha512.New(), nil
-	case "ripemd160":
-		return ripemd160.New(), nil
-	case "sha3-224":
-		return sha3.New224(), nil
-	case "sha3-256":
-		return sha3.New256(), nil
-	case "sha3-384":
-		return sha3.New384(), nil
-	case "sha3-512":
-		return sha3.New512(), nil
-	case "blake2b":
-		return blake2b.New512(nil)
-	case "shake128":
-		return sha3.NewShake128(), nil
-	case "shake256":
-		return sha3.NewShake256(), nil
-	default:
-		return nil, fmt.Errorf("unsupported hash algorithm: %s", algo)
+		// Check if a new row is needed
+		if *fileCount%blockSize == 0 {
+			if (*fileCount/blockSize)%rowSize == 0 {
+				fmt.Printf(" [%s]\n", strconv.FormatInt(int64(*fileCount), 10))
+			}
+		}
 	}
 }
 
-func hashFile(filePath string, algo string) (string, error) {
-	h, err := getHash(algo)
-	if err != nil {
-		return "", err
-	}
-
-	file, err := os.Open(filePath)
-	if err != nil {
-		return "", err
-	}
-	defer file.Close()
-
-	if _, err := io.Copy(h, file); err != nil {
-		return "", err
-	}
-
-	// For XOFs like SHAKE, we need to read a specific output length.
-	// We'll use a fixed length of 64 bytes for consistent output.
-	if strings.HasPrefix(strings.ToLower(algo), "shake") {
-		output := make([]byte, 64)
-		h.Sum(output[:0])
-		return fmt.Sprintf("%x", output), nil
-	}
-
-	return fmt.Sprintf("%x", h.Sum(nil)), nil
-}
-
-func setXattrHash(filePath string, hashValue string) {
-	err := unix.Setxattr(filePath, xattrName, []byte(hashValue), 0)
-	if err != nil {
-		log.Printf("Warning: Could not set extended attribute for %s. Reason: %v", filePath, err)
-	}
-}
+// ProcessOneDirectory is still a placeholder
+func ProcessOneDirectory(dirPath string) {}
 
 func main() {
-	var hashAlgo = flag.String("a", "sha256", "Select the hashing algorithm (md4, md5, sha1, ripemd160, sha224, sha256, sha384, sha512, sha3-224, sha3-256, sha3-384, sha3-512, blake2b, shake128, shake256).")
-	var setXattr = flag.Bool("x", false, "Store the calculated hash as an extended attribute on each file.")
+	var verboseFlag bool
+	var recursiveFlag bool
 	var availableFlag bool
+	var blockSize int
+	var rowSize int
+	var digits int
+
+	// Define the flags
 	flag.BoolVar(&availableFlag, "A", false, "List available algorithms and exit.")
 	flag.BoolVar(&availableFlag, "available", false, "List available algorithms and exit.")
 	flag.BoolVar(&availableFlag, "algorithms", false, "List available algorithms and exit.")
+
+	flag.BoolVar(&recursiveFlag, "r", false, "Process directories recursively.")
+	flag.BoolVar(&recursiveFlag, "recursive", false, "Process directories recursively.")
+
+	flag.BoolVar(&verboseFlag, "v", false, "Enable verbose output.")
+	flag.BoolVar(&verboseFlag, "verbose", false, "Enable verbose output.")
+
+	flag.IntVar(&blockSize, "blockSize", 10, "Number of '=' symbols per block.")
+	flag.IntVar(&rowSize, "rowSize", 10, "Number of blocks per row.")
+	flag.IntVar(&digits, "digits", 6, "Number of digits for the file counter.")
+
+	// Parse the flags
 	flag.Parse()
 
+	// Handle the -A/--available flag first, as it's a special case
 	if availableFlag {
 		fmt.Println("Available Hashing Algorithms:")
-		fmt.Println("  - MD4")
-		fmt.Println("  - MD5")
-		fmt.Println("  - SHA-1")
-		fmt.Println("  - RIPEMD-160")
-		fmt.Println("  - SHA-2 (sha224, sha256, sha384, sha512)")
-		fmt.Println("  - SHA-3 (sha3-224, sha3-256, sha3-384, sha3-512)")
-		fmt.Println("  - SHAKE (shake128, shake256) - eXtendable-Output Functions")
-		fmt.Println("  - BLAKE2b")
+		// ... your existing list of algorithms goes here ...
 		return
 	}
 
-	if len(flag.Args()) == 0 {
+	// Get the paths from the command-line arguments
+	paths := flag.Args()
+
+	if len(paths) == 0 {
 		fmt.Println("Usage: same [options] <path1> <path2> ...")
 		flag.PrintDefaults()
 		os.Exit(1)
 	}
 
-	for _, p := range flag.Args() {
-		filepath.Walk(p, func(path string, info os.FileInfo, err error) error {
-			if err != nil {
-				log.Printf("Error accessing path %s: %v", path, err)
-				return nil
-			}
-			if !info.IsDir() {
-				hashVal, err := hashFile(path, *hashAlgo)
-				if err != nil {
-					log.Printf("Error hashing file %s: %v", path, err)
-					return nil
-				}
-				filesByHash[hashVal] = append(filesByHash[hashVal], path)
-				if *setXattr {
-					setXattrHash(path, hashVal)
-				}
-			}
-			return nil
-		})
-	}
+	// First pass: Count files for a more accurate progress bar (optional, but good practice)
+	// This example skips the counting to keep the code simpler.
 
-	fmt.Println("--- Duplicate files found ---")
-	foundDuplicates := false
-	for h, paths := range filesByHash {
-		if len(paths) > 1 {
-			foundDuplicates = true
-			fmt.Printf("Hash: %s\n", h)
-			for _, p := range paths {
-				fmt.Printf("  - %s\n", p)
+	// Second pass: Process files and display progress
+	var processedFileCount int
+	for _, path := range paths {
+		info, err := os.Stat(path)
+		if err != nil {
+			log.Printf("Error accessing path %s: %v", path, err)
+			continue
+		}
+
+		if info.IsDir() {
+			ProcessOneDirectory(path)
+			if recursiveFlag {
+				filepath.Walk(path, func(walkerPath string, walkerInfo os.FileInfo, err error) error {
+					if err != nil {
+						log.Printf("Error accessing path %s: %v", walkerPath, err)
+						return nil
+					}
+					if !walkerInfo.IsDir() {
+						ProcessOneFile(&processedFileCount, verboseFlag, blockSize, rowSize, digits)
+					}
+					return nil
+				})
 			}
-			fmt.Println()
+		} else { // It's a file
+			ProcessOneFile(&processedFileCount, verboseFlag, blockSize, rowSize, digits)
 		}
 	}
-
-	if !foundDuplicates {
-		fmt.Println("No duplicate files found.")
-	}
+	fmt.Println("\nCompleted.")
 }
