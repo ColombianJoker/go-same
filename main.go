@@ -215,6 +215,26 @@ func main() {
 
 	if availableFlag {
 		fmt.Println("Available Hashing Algorithms:")
+		fmt.Println("- md4")
+		fmt.Println("- md5")
+		fmt.Println("- sha1")
+		fmt.Println("- sha224")
+		fmt.Println("- sha256 (default)")
+		fmt.Println("- sha384")
+		fmt.Println("- sha512")
+		fmt.Println("- ripemd160")
+		fmt.Println("- sha3-224")
+		fmt.Println("- sha3-256")
+		fmt.Println("- sha3-384")
+		fmt.Println("- sha3-512")
+		fmt.Println("- blake2b")
+		fmt.Println("- shake128")
+		fmt.Println("- shake256")
+		return
+	}
+
+	if availableFlag {
+		fmt.Println("Available Hashing Algorithms:")
 		// ... your existing list of algorithms goes here ...
 		return
 	}
