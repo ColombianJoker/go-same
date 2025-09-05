@@ -70,29 +70,24 @@ func hashFile(filePath string, algo string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-
 	file, err := os.Open(filePath)
 	if err != nil {
 		return "", err
 	}
 	defer file.Close()
-
 	if _, err := io.Copy(h, file); err != nil {
 		return "", err
 	}
-
-	// For XOFs like SHAKE, we need to read a specific output length.
 	if strings.HasPrefix(strings.ToLower(algo), "shake") {
 		output := make([]byte, 64)
 		h.Sum(output[:0])
 		return fmt.Sprintf("%x", output), nil
 	}
-
 	return fmt.Sprintf("%x", h.Sum(nil)), nil
 }
 
 // ProcessOneFile now calculates a hash and updates the map
-func ProcessOneFile(filePath string, fileCount *int, verbose bool, blockSize int, rowSize int, hashAlgo string) {
+func ProcessOneFile(filePath string, fileCount *int, verbose bool, blockSize int, rowSize int, hashAlgo string, debugFlag bool) {
 	info, err := os.Stat(filePath)
 	if err != nil {
 		log.Printf("Error checking file size for %s: %v", filePath, err)
@@ -103,7 +98,6 @@ func ProcessOneFile(filePath string, fileCount *int, verbose bool, blockSize int
 		return
 	}
 
-	// Check for zero-sized file
 	if info.Size() == 0 {
 		filesByHash["0-byte-file"] = append(filesByHash["0-byte-file"], filePath)
 		*fileCount++
@@ -111,21 +105,22 @@ func ProcessOneFile(filePath string, fileCount *int, verbose bool, blockSize int
 			fmt.Printf(".")
 		}
 	} else {
-		// For non-zero files, calculate the hash
 		fileHash, err := hashFile(filePath, hashAlgo)
 		if err != nil {
 			log.Printf("Error hashing file %s: %v", filePath, err)
 			return
 		}
-
 		filesByHash[fileHash] = append(filesByHash[fileHash], filePath)
 		*fileCount++
+
 		if verbose {
 			fmt.Printf("=")
 		}
+		if debugFlag {
+			fmt.Printf("%s %s\n", fileHash, filePath)
+		}
 	}
 
-	// Now handle the progress bar display, which is only a concern for verbose output
 	if verbose {
 		if *fileCount%blockSize == 0 {
 			if (*fileCount/blockSize)%rowSize != 0 {
@@ -138,7 +133,7 @@ func ProcessOneFile(filePath string, fileCount *int, verbose bool, blockSize int
 	}
 }
 
-func walkAndProcess(path string, fileCount *int, verbose, recursive, followLinks bool, blockSize, rowSize int, hashAlgo string) {
+func walkAndProcess(path string, fileCount *int, verbose, recursive, followLinks bool, blockSize, rowSize int, hashAlgo string, debugFlag bool) {
 	walker := func(walkerPath string, d fs.DirEntry, err error) error {
 		if err != nil {
 			log.Printf("Error accessing path %s: %v", walkerPath, err)
@@ -167,12 +162,12 @@ func walkAndProcess(path string, fileCount *int, verbose, recursive, followLinks
 					return nil
 				}
 				if !resolvedInfo.IsDir() {
-					ProcessOneFile(resolvedPath, fileCount, verbose, blockSize, rowSize, hashAlgo)
+					ProcessOneFile(resolvedPath, fileCount, verbose, blockSize, rowSize, hashAlgo, debugFlag)
 				}
 			}
 			return nil
 		}
-		ProcessOneFile(walkerPath, fileCount, verbose, blockSize, rowSize, hashAlgo)
+		ProcessOneFile(walkerPath, fileCount, verbose, blockSize, rowSize, hashAlgo, debugFlag)
 		return nil
 	}
 	filepath.WalkDir(path, walker)
@@ -185,15 +180,11 @@ func main() {
 	var followLinksFlag bool
 	var showTimeFlag bool
 	var skipZeroSized bool
+	var debugFlag bool
 	var blockSize int
 	var rowSize int
 	var digits int
 	var hashAlgo string
-
-	// New flag for skipping zero-sized files
-	flag.BoolVar(&skipZeroSized, "z", false, "Skip printing zero-sized files in the output.")
-	flag.BoolVar(&skipZeroSized, "skip-zero-sized", false, "Skip printing zero-sized files in the output.")
-	flag.BoolVar(&skipZeroSized, "skip-zero", false, "Skip printing zero-sized files in the output.")
 
 	flag.StringVar(&hashAlgo, "a", "sha256", "Select the hashing algorithm.")
 	flag.BoolVar(&availableFlag, "A", false, "List available algorithms and exit.")
@@ -207,11 +198,23 @@ func main() {
 	flag.BoolVar(&followLinksFlag, "follow-links", false, "Follow symbolic links.")
 	flag.BoolVar(&showTimeFlag, "t", false, "Show time taken to process.")
 	flag.BoolVar(&showTimeFlag, "show-time", false, "Show time taken to process.")
+	flag.BoolVar(&skipZeroSized, "z", false, "Skip printing zero-sized files in the output.")
+	flag.BoolVar(&skipZeroSized, "skip-zero-sized", false, "Skip printing zero-sized files in the output.")
+	flag.BoolVar(&skipZeroSized, "skip-zero", false, "Skip printing zero-sized files in the output.")
+	flag.BoolVar(&debugFlag, "D", false, "Enable debug mode (disables other output and prints hash, file name per file).")
+	flag.BoolVar(&debugFlag, "DEBUG", false, "Enable debug mode (disables other output and prints hash, file name per file).")
 	flag.IntVar(&blockSize, "blockSize", 10, "Number of '=' symbols per block.")
 	flag.IntVar(&rowSize, "rowSize", 10, "Number of blocks per row.")
 	flag.IntVar(&digits, "digits", 6, "Number of digits for the file counter.")
 
 	flag.Parse()
+
+	// If debug mode is enabled, override other output flags
+	if debugFlag {
+		verboseFlag = false
+		showTimeFlag = false
+		fmt.Printf("Using hashing algorithm: %s\n", hashAlgo)
+	}
 
 	if availableFlag {
 		fmt.Println("Available Hashing Algorithms:")
@@ -233,12 +236,6 @@ func main() {
 		return
 	}
 
-	if availableFlag {
-		fmt.Println("Available Hashing Algorithms:")
-		// ... your existing list of algorithms goes here ...
-		return
-	}
-
 	var startTime time.Time
 	if showTimeFlag {
 		startTime = time.Now()
@@ -246,14 +243,12 @@ func main() {
 			fmt.Printf("Start time: %s\n", startTime.Format("2006-01-02 15:04:05"))
 		}
 	}
-
 	paths := flag.Args()
 	if len(paths) == 0 {
 		fmt.Println("Usage: same [options] <path1> <path2> ...")
 		flag.PrintDefaults()
 		os.Exit(1)
 	}
-
 	var processedFileCount int
 	for _, path := range paths {
 		info, err := os.Lstat(path)
@@ -261,7 +256,6 @@ func main() {
 			log.Printf("Error accessing path %s: %v", path, err)
 			continue
 		}
-
 		if info.Mode()&os.ModeSymlink != 0 {
 			if followLinksFlag {
 				resolvedPath, err := filepath.EvalSymlinks(path)
@@ -279,23 +273,19 @@ func main() {
 				continue
 			}
 		}
-
 		if info.IsDir() {
-			walkAndProcess(path, &processedFileCount, verboseFlag, recursiveFlag, followLinksFlag, blockSize, rowSize, hashAlgo)
+			walkAndProcess(path, &processedFileCount, verboseFlag, recursiveFlag, followLinksFlag, blockSize, rowSize, hashAlgo, debugFlag)
 		} else {
-			ProcessOneFile(path, &processedFileCount, verboseFlag, blockSize, rowSize, hashAlgo)
+			ProcessOneFile(path, &processedFileCount, verboseFlag, blockSize, rowSize, hashAlgo, debugFlag)
 		}
 	}
-
 	if verboseFlag {
 		fmt.Println("\n--- Duplicate files found ---")
 		foundDuplicates := false
 		for h, paths := range filesByHash {
-			// Skip the "0-byte-file" hash if the skip flag is set
 			if h == "0-byte-file" && skipZeroSized {
 				continue
 			}
-
 			if len(paths) > 1 {
 				foundDuplicates = true
 				fmt.Printf("%s:\n", h)
@@ -309,7 +299,6 @@ func main() {
 			fmt.Println("No duplicate files found.")
 		}
 	}
-
 	if showTimeFlag {
 		endTime := time.Now()
 		elapsed := endTime.Sub(startTime)
